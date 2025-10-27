@@ -147,7 +147,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         console.log('Registering slash commands...');
         await rest.put(
-            Routes.applicationGuildCommands('YOUR_BOT_ID', 'YOUR_GUILD_ID'),
+            Routes.applicationGuildCommands('1432123360959140014', '1353495424056688760'),
             { body: [adjustStatCommand.toJSON()] },
         );
         console.log('Slash commands registered!');

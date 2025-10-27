@@ -5,93 +5,59 @@ const client = new Client({ intents: [
     GatewayIntentBits.MessageContent
 ] });
 
-// ===== CONFIGURE THESE =====
-const RESULTS_CHANNEL_ID = '1353497689693618226'; // channel where match results are posted
-const ROLE_ID = '1353499162502631484'; // role whose members are tracked
-const MOTM_EMOJI = '<:MOTM:1411802660029468744>';
-const DOTM_EMOJI = '<:defender:1411802703775924224>';
-// ===========================
+// ===== CONFIG =====
+const RESULTS_CHANNEL_ID = 'YOUR_RESULTS_CHANNEL_ID'; // Channel where results are posted
+const STAT_CHANNEL_ID = 'YOUR_STAT_TRACKER_CHANNEL_ID'; // Channel to post tracker
+const ROLE_ID = 'YOUR_ROLE_ID'; // Role to ping
+const MOTM_EMOJI = '<:MOTM:1411802660029468744>'; 
+const DOTM_EMOJI = '<:defender:1411802703775924224>'; 
+// ==================
 
-client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}`);
-});
+let stats = {}; // Store player stats
 
-client.on('messageCreate', async message => {
-    if (!message.guild) return;
+// ===== Helper: parse result message =====
+function parseResultMessage(content) {
+    const lines = content.split('\n');
+    let currentPlayerId = null;
 
-    // Command to generate stat tracker
-    if (message.content.startsWith('!statstracker')) {
-        const role = message.guild.roles.cache.get(ROLE_ID);
-        if (!role) return message.channel.send('Role not found.');
-
-        // Get all members with this role
-        const members = role.members.map(m => m.user.id);
-
-        // Initialize stats
-        const stats = {};
-        members.forEach(id => {
-            stats[id] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
-        });
-
-        // Fetch messages from results channel
-        const channel = message.guild.channels.cache.get(RESULTS_CHANNEL_ID);
-        if (!channel) return message.channel.send('Results channel not found.');
-
-        const messages = await channel.messages.fetch({ limit: 100 }); // adjust if needed
-
-        messages.forEach(msg => {
-            // Parse goal scorers (e.g., "2x <@USER_ID>")
-            const goalRegex = /(\d+)x <@!?(\d+)>/g;
-            let match;
-            while ((match = goalRegex.exec(msg.content)) !== null) {
-                const goals = parseInt(match[1]);
-                const userId = match[2];
-                if (stats[userId]) stats[userId].goals += goals;
-            }
-
-            // Parse assists (e.g., "1x assist <@USER_ID>")
-            const assistRegex = /(\d+)x assist <@!?(\d+)>/g;
-            while ((match = assistRegex.exec(msg.content)) !== null) {
-                const assists = parseInt(match[1]);
-                const userId = match[2];
-                if (stats[userId]) stats[userId].assists += assists;
-            }
-
-            // Parse MOTM
-            const motmRegex = /MOTM: <@!?(\d+)>/;
-            const motmMatch = motmRegex.exec(msg.content);
-            if (motmMatch && stats[motmMatch[1]]) stats[motmMatch[1]].motm += 1;
-
-            // Parse DOTM
-            const dotmRegex = /DOTM: <@!?(\d+)>/;
-            const dotmMatch = dotmRegex.exec(msg.content);
-            if (dotmMatch && stats[dotmMatch[1]]) stats[dotmMatch[1]].dotm += 1;
-        });
-
-        // Determine leading player (highest goals + assists)
-        const leadingPlayerId = Object.keys(stats).reduce((a, b) => {
-            const gaA = stats[a].goals + stats[a].assists;
-            const gaB = stats[b].goals + stats[b].assists;
-            return gaB > gaA ? b : a;
-        });
-
-        // Build the stat tracker message
-        let trackerMessage = '';
-        for (const [id, stat] of Object.entries(stats)) {
-            trackerMessage += `** <@${id}> GOALS x${stat.goals} | ASSISTS x${stat.assists} | x${stat.motm} ${MOTM_EMOJI} | x${stat.dotm} ${DOTM_EMOJI} **\n`;
+    lines.forEach(line => {
+        line = line.trim();
+        // Goal scorer line (e.g., "3x <@USERID>")
+        const goalMatch = line.match(/^(\d+)x\s*<@!?(\d+)>/);
+        if (goalMatch) {
+            const goals = parseInt(goalMatch[1]);
+            currentPlayerId = goalMatch[2];
+            if (!stats[currentPlayerId]) stats[currentPlayerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
+            stats[currentPlayerId].goals += goals;
         }
-        trackerMessage += `\n*Leading: <@${leadingPlayerId}>*\n`;
 
-        // Add latest date
-        const today = new Date();
-        trackerMessage += `\n** ${today.getDate()} / ${today.getMonth() + 1} **\n`;
+        // Assists line (e.g., "-# 1x assist <@USERID>")
+        const assistMatch = line.match(/^-# (\d+)x assist <@!?(\d+)>/);
+        if (assistMatch) {
+            const assists = parseInt(assistMatch[1]);
+            const playerId = assistMatch[2];
+            if (!stats[playerId]) stats[playerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
+            stats[playerId].assists += assists;
+        }
 
-        // Add role ping
-        trackerMessage += `# <@&${ROLE_ID}>`;
+        // MOTM line
+        const motmMatch = line.match(/^MOTM:\s*<@!?(\d+)>/);
+        if (motmMatch) {
+            const playerId = motmMatch[1];
+            if (!stats[playerId]) stats[playerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
+            stats[playerId].motm += 1;
+        }
 
-        message.channel.send(trackerMessage);
-    }
-});
+        // DOTM line
+        const dotmMatch = line.match(/^DOTM:\s*<@!?(\d+)>/);
+        if (dotmMatch) {
+            const playerId = dotmMatch[1];
+            if (!stats[playerId]) stats[playerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
+            stats[playerId].dotm += 1;
+        }
+    });
+}
 
-// Login with token stored in Render as an environment variable
-client.login(process.env.DISCORD_TOKEN);
+// ===== Build tracker message =====
+function buildTrackerMessage(guild) {
+    const role = guild.roles.cache

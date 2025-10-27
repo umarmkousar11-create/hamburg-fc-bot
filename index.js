@@ -147,7 +147,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         console.log('Registering slash commands...');
         await rest.put(
-            Routes.applicationGuildCommands('1432123360959140014', '1353495424056688760'),
+            Routes.applicationGuildCommands('YOUR_BOT_ID', 'YOUR_GUILD_ID'),
             { body: [adjustStatCommand.toJSON()] },
         );
         console.log('Slash commands registered!');
@@ -177,3 +177,9 @@ client.on('interactionCreate', async interaction => {
 
 // ===== Login =====
 client.login(process.env.DISCORD_TOKEN);
+
+// ===== Keep-alive web server for Render =====
+const express = require('express');
+const app = express();
+app.get('/', (req, res) => res.send('Bot is running'));
+app.listen(3000, () => console.log('✅ Keep-alive server running on port 3000'));

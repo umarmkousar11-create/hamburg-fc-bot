@@ -1,117 +1,97 @@
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
-require('dotenv').config();
+const { Client, GatewayIntentBits } = require('discord.js');
+const client = new Client({ intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+] });
 
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ],
-    partials: [Partials.Channel]
+// ===== CONFIGURE THESE =====
+const RESULTS_CHANNEL_ID = '1353497689693618226'; // channel where match results are posted
+const ROLE_ID = '1353499162502631484'; // role whose members are tracked
+const MOTM_EMOJI = '<:MOTM:1411802660029468744>';
+const DOTM_EMOJI = '<:defender:1411802703775924224>';
+// ===========================
+
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`);
 });
 
-// Environment variables
-const TEAM_ROLE_ID = process.env.TEAM_ROLE_ID;
-const RESULTS_CHANNEL_ID = process.env.RESULTS_CHANNEL_ID;
-const STATS_CHANNEL_ID = process.env.STATS_CHANNEL_ID;
+client.on('messageCreate', async message => {
+    if (!message.guild) return;
 
-// Data storage
-let stats = {};
+    // Command to generate stat tracker
+    if (message.content.startsWith('!statstracker')) {
+        const role = message.guild.roles.cache.get(ROLE_ID);
+        if (!role) return message.channel.send('Role not found.');
 
-// Parse match results
-function parseResults(message) {
-    const lines = message.content.split('\n').map(l => l.trim()).filter(l => l);
-    let motm, dotm;
+        // Get all members with this role
+        const members = role.members.map(m => m.user.id);
 
-    lines.forEach(line => {
-        if (line.startsWith('MOTM:')) motm = line.replace('MOTM:', '').trim().replace(/<@!?(\d+)>/, '$1');
-        else if (line.startsWith('DOTM:')) dotm = line.replace('DOTM:', '').trim().replace(/<@!?(\d+)>/, '$1');
-        else if (/x <@!?(\d+)>/.test(line)) {
-            const match = line.match(/(\d+)x <@!?(\d+)>/);
-            const goals = parseInt(match[1]);
-            const userId = match[2];
+        // Initialize stats
+        const stats = {};
+        members.forEach(id => {
+            stats[id] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
+        });
 
-            if (!stats[userId]) stats[userId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
-            stats[userId].goals += goals;
+        // Fetch messages from results channel
+        const channel = message.guild.channels.cache.get(RESULTS_CHANNEL_ID);
+        if (!channel) return message.channel.send('Results channel not found.');
 
-            const assistMatch = line.match(/-# (\d+)x assist <@!?(\d+)>/);
-            if (assistMatch) {
-                const assists = parseInt(assistMatch[1]);
-                const assistUser = assistMatch[2];
-                if (!stats[assistUser]) stats[assistUser] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
-                stats[assistUser].assists += assists;
+        const messages = await channel.messages.fetch({ limit: 100 }); // adjust if needed
+
+        messages.forEach(msg => {
+            // Parse goal scorers (e.g., "2x <@USER_ID>")
+            const goalRegex = /(\d+)x <@!?(\d+)>/g;
+            let match;
+            while ((match = goalRegex.exec(msg.content)) !== null) {
+                const goals = parseInt(match[1]);
+                const userId = match[2];
+                if (stats[userId]) stats[userId].goals += goals;
             }
+
+            // Parse assists (e.g., "1x assist <@USER_ID>")
+            const assistRegex = /(\d+)x assist <@!?(\d+)>/g;
+            while ((match = assistRegex.exec(msg.content)) !== null) {
+                const assists = parseInt(match[1]);
+                const userId = match[2];
+                if (stats[userId]) stats[userId].assists += assists;
+            }
+
+            // Parse MOTM
+            const motmRegex = /MOTM: <@!?(\d+)>/;
+            const motmMatch = motmRegex.exec(msg.content);
+            if (motmMatch && stats[motmMatch[1]]) stats[motmMatch[1]].motm += 1;
+
+            // Parse DOTM
+            const dotmRegex = /DOTM: <@!?(\d+)>/;
+            const dotmMatch = dotmRegex.exec(msg.content);
+            if (dotmMatch && stats[dotmMatch[1]]) stats[dotmMatch[1]].dotm += 1;
+        });
+
+        // Determine leading player (highest goals + assists)
+        const leadingPlayerId = Object.keys(stats).reduce((a, b) => {
+            const gaA = stats[a].goals + stats[a].assists;
+            const gaB = stats[b].goals + stats[b].assists;
+            return gaB > gaA ? b : a;
+        });
+
+        // Build the stat tracker message
+        let trackerMessage = '';
+        for (const [id, stat] of Object.entries(stats)) {
+            trackerMessage += `** <@${id}> GOALS x${stat.goals} | ASSISTS x${stat.assists} | x${stat.motm} ${MOTM_EMOJI} | x${stat.dotm} ${DOTM_EMOJI} **\n`;
         }
-    });
+        trackerMessage += `\n*Leading: <@${leadingPlayerId}>*\n`;
 
-    if (motm) {
-        if (!stats[motm]) stats[motm] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
-        stats[motm].motm += 1;
-    }
+        // Add latest date
+        const today = new Date();
+        trackerMessage += `\n** ${today.getDate()} / ${today.getMonth() + 1} **\n`;
 
-    if (dotm) {
-        if (!stats[dotm]) stats[dotm] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
-        stats[dotm].dotm += 1;
-    }
-}
+        // Add role ping
+        trackerMessage += `# <@&${ROLE_ID}>`;
 
-// Build leaderboard
-function buildLeaderboard() {
-    let leaderboard = '**HAMBURG FC PLAYER STATS (FM) <:hamburg:1432095514773684385>.**\n\n';
-    const sorted = Object.entries(stats).sort((a, b) => {
-        if (b[1].goals !== a[1].goals) return b[1].goals - a[1].goals;
-        return b[1].assists - a[1].assists;
-    });
-
-    sorted.forEach(([id, s]) => {
-        leaderboard += `${s.goals}x <@${id}>\n`;
-        if (s.assists) leaderboard += `-# ${s.assists}x assist\n`;
-        if (s.motm) leaderboard += `MOTM: ${s.motm} <:MOTM:1411802660029468744>\n`;
-        if (s.dotm) leaderboard += `DOTM: ${s.dotm} <:defender:1411802703775924224>.\n`;
-        leaderboard += '\n';
-    });
-
-    return leaderboard;
-}
-
-// Event: Listen for messages in results channel
-client.on('messageCreate', message => {
-    if (message.channel.id !== RESULTS_CHANNEL_ID) return;
-    if (!message.member.roles.cache.has(TEAM_ROLE_ID)) return;
-
-    parseResults(message);
-
-    // Optional: react to confirm message processed
-    message.react('✅');
-
-    // Update stats channel automatically
-    if (STATS_CHANNEL_ID) {
-        const channel = client.channels.cache.get(STATS_CHANNEL_ID);
-        if (channel) channel.send(buildLeaderboard());
+        message.channel.send(trackerMessage);
     }
 });
 
-// Commands
-client.on('messageCreate', message => {
-    // Team stats command
-    if (message.content === '!teamstats') {
-        const channel = client.channels.cache.get(STATS_CHANNEL_ID) || message.channel;
-        channel.send(buildLeaderboard());
-    }
-
-    // Player stats command
-    if (message.content.startsWith('!playerstats')) {
-        const mention = message.mentions.users.first();
-        if (!mention) return message.channel.send('Mention a player.');
-        const s = stats[mention.id];
-        if (!s) return message.channel.send('No stats for this player.');
-        let text = `**${mention.username} Stats:**\n`;
-        text += `${s.goals}x Goals\n`;
-        text += `${s.assists}x Assists\n`;
-        if (s.motm) text += `MOTM: ${s.motm} <:MOTM:1411802660029468744>\n`;
-        if (s.dotm) text += `DOTM: ${s.dotm} <:defender:1411802703775924224>.\n`;
-        message.channel.send(text);
-    }
-});
-
-client.login(process.env.TOKEN);
+// Login with token stored in Render as an environment variable
+client.login(process.env.DISCORD_TOKEN);

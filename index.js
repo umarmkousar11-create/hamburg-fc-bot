@@ -27,13 +27,14 @@ function parseResultMessage(content) {
             if (!stats[playerId]) stats[playerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
             stats[playerId].goals += goals;
         }
-        const assistMatch = line.match(/^-# (\d+)x assist <@!?(\d+)>/);
-        if (assistMatch) {
-            const assists = parseInt(assistMatch[1]);
-            const playerId = assistMatch[2];
-            if (!stats[playerId]) stats[playerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
-            stats[playerId].assists += assists;
-        }
+        const assistMatches = [...line.matchAll(/(\d+)x assist <@!?(\d+)>/g)];
+assistMatches.forEach(match => {
+    const assists = parseInt(match[1]);
+    const playerId = match[2];
+    if (!stats[playerId]) stats[playerId] = { goals: 0, assists: 0, motm: 0, dotm: 0 };
+    stats[playerId].assists += assists;
+});
+        
         const motmMatch = line.match(/^MOTM:\s*<@!?(\d+)>/);
         if (motmMatch) {
             const playerId = motmMatch[1];
